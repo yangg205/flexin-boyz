@@ -52,7 +52,7 @@ class ProblemAImprovedController:
         rospy.loginfo("Problem A Improved Controller khởi tạo thành công!")
 
     def setup_parameters(self):
-        self.base_speed = 0.15
+        self.base_speed = 2.0
         self.turn_gain = 0.3
         self.line_roi_height = 160
         self.line_roi_width = 224
@@ -170,28 +170,44 @@ class ProblemAImprovedController:
             return False
         line_center, line_detected = self.detect_line(self.latest_frame)
         return not line_detected
+    
     def handle_intersection(self):
         self.update_current_node()
         if not self.path:
             rospy.logwarn("Không có đường đi được lập kế hoạch!")
             return Direction.NORTH
+    
         next_node_id = self.path[0]
         self.path.pop(0)
-        current_pos = self.navigator.nodes_data[self.current_node_id]
-        next_pos = self.navigator.nodes_data[next_node_id]
-        dx = next_pos['x'] - current_pos['x']
-        dy = next_pos['y'] - current_pos['y']
-        if dx > 0:
-            direction = Direction.EAST
-        elif dx < 0:
-            direction = Direction.WEST
-        elif dy > 0:
+    
+    # Lấy cạnh từ current_node → next_node
+        edge = None
+        for e in self.navigator.edges_data:
+            if e['source'] == self.current_node_id and e['target'] == next_node_id:
+                edge = e
+                break
+    
+        if edge is None:
+            rospy.logerr(f"Không tìm thấy cạnh từ {self.current_node_id} đến {next_node_id}")
+            return Direction.NORTH
+    
+        # Map label sang Direction enum
+        label = edge['label']
+        if label == "N":
             direction = Direction.NORTH
-        else:
+        elif label == "S":
             direction = Direction.SOUTH
+        elif label == "E":
+            direction = Direction.EAST
+        elif label == "W":
+            direction = Direction.WEST
+        else:
+            direction = Direction.NORTH
+        
         self.current_node_id = next_node_id
         rospy.loginfo(f"Di chuyển đến node {next_node_id}, hướng {direction.name}")
         return direction
+    
     def execute_turn(self, direction):
         # Dùng thời gian + encoder (nếu có) để điều chỉnh góc rẽ
         turn_duration = 1.0
