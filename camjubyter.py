@@ -1,29 +1,31 @@
 import cv2
-from IPython.display import display, Image, clear_output
-from jetbot import Camera
-import time
-import numpy as np
+from IPython.display import display, clear_output
+import ipywidgets as widgets
 
-# Khởi tạo camera CSI
+# Mở camera CSI
+cap = cv2.VideoCapture(0)  # /dev/video0
+if not cap.isOpened():
+    raise RuntimeError("Không mở được camera CSI")
+
+# Widget hiển thị video
+image_widget = widgets.Image(format='jpeg')
+display(image_widget)
+
 try:
-    camera = Camera.instance(width=300, height=300)
-except Exception as e:
-    print("Không mở được camera CSI:", e)
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            continue
 
-# Hàm hiển thị video trong notebook
-def show_frame(frame):
-    # Convert BGR -> RGB
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    # Encode to PNG
-    _, buf = cv2.imencode('.png', rgb_frame)
-    display(Image(data=buf.tobytes()))
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        _, jpeg = cv2.imencode('.jpg', frame_rgb)
+        image_widget.value = jpeg.tobytes()
 
-# Vòng lặp hiển thị video
-try:
-    for _ in range(100):  # Chạy 100 frame
-        frame = camera.value
-        clear_output(wait=True)  # Xóa frame cũ
-        show_frame(frame)
-        time.sleep(0.05)
+        clear_output(wait=True)
+        display(image_widget)
+
+except KeyboardInterrupt:
+    print("Dừng stream camera")
+
 finally:
-    camera.stop()
+    cap.release()  # giải phóng camera
