@@ -11,9 +11,7 @@ from enum import Enum
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from pathlib import Path
 import argparse
-import tempfile
 
 from jetbot import Robot
 from sensor_msgs.msg import LaserScan, Image
@@ -45,10 +43,26 @@ class JetBotController:
         self.video_writer = None
         self.initialize_video_writer()
 
-        # Fetch map data and save to temporary file
+        # Fetch map data
         self.map_data = self.fetch_map(token, map_type)
-        self.temp_map_file = self.save_map_to_temp_file(self.map_data, map_type)
-        self.navigator = MapNavigator(self.temp_map_file)  # Pass file path to MapNavigator
+        rospy.loginfo(f"Map data: {json.dumps(self.map_data, ensure_ascii=False, indent=2)}")
+
+        # Validate map data
+        if not isinstance(self.map_data, dict):
+            rospy.logerr("Lỗi: Map data không phải là dictionary.")
+            raise ValueError("Map data phải là một dictionary.")
+        if 'nodes' not in self.map_data or 'edges' not in self.map_data:
+            rospy.logerr("Lỗi: Map data thiếu 'nodes' hoặc 'edges'.")
+            raise ValueError("Map data thiếu các trường bắt buộc: nodes, edges.")
+        
+        # Initialize MapNavigator with raw map data
+        self.navigator = MapNavigator(self.map_data)
+        
+        # Validate start_node and end_node
+        if self.navigator.start_node is None or self.navigator.end_node is None:
+            rospy.logerr(f"Lỗi: start_node ({self.navigator.start_node}) hoặc end_node ({self.navigator.end_node}) không hợp lệ.")
+            raise ValueError("start_node hoặc end_node không được khởi tạo đúng trong MapNavigator.")
+        
         self.current_node_id = self.navigator.start_node
         self.target_node_id = None
         self.planned_path = None
@@ -109,32 +123,25 @@ class JetBotController:
             rospy.logerr(f"Lỗi khi kết nối/parse: {e}")
             raise
 
-    def save_map_to_temp_file(self, map_data, map_type):
-        """Save map data to a temporary JSON file and return its path."""
-        try:
-            with tempfile.NamedTemporaryFile(mode='w', suffix=f'_{map_type}.json', delete=False, encoding='utf-8') as f:
-                json.dump(map_data, f, ensure_ascii=False, indent=2)
-                temp_file_path = f.name
-            rospy.loginfo(f"Đã lưu map tạm thời vào: {temp_file_path}")
-            return temp_file_path
-        except Exception as e:
-            rospy.logerr(f"Lỗi khi lưu map vào file tạm thời: {e}")
-            raise
-
     def plan_initial_route(self): 
         """Lập kế hoạch đường đi ban đầu từ điểm xuất phát đến đích."""
         rospy.loginfo(f"Đang lập kế hoạch từ node {self.navigator.start_node} đến {self.navigator.end_node}...")
-        self.planned_path = self.navigator.find_path(
-            self.navigator.start_node, 
-            self.navigator.end_node,
-            self.banned_edges
-        )
-        if self.planned_path and len(self.planned_path) > 1:
-            self.target_node_id = self.planned_path[1]
-            rospy.loginfo(f"Đã tìm thấy đường đi: {self.planned_path}. Đích đến đầu tiên: {self.target_node_id}")
-        else:
-            rospy.logerr("Không tìm thấy đường đi hoặc đường đi quá ngắn!")
+        try:
+            self.planned_path = self.navigator.find_path(
+                self.navigator.start_node, 
+                self.navigator.end_node,
+                self.banned_edges
+            )
+            if self.planned_path and len(self.planned_path) > 1:
+                self.target_node_id = self.planned_path[1]
+                rospy.loginfo(f"Đã tìm thấy đường đi: {self.planned_path}. Đích đến đầu tiên: {self.target_node_id}")
+            else:
+                rospy.logerr("Không tìm thấy đường đi hoặc đường đi quá ngắn!")
+                self._set_state(RobotState.DEAD_END)
+        except Exception as e:
+            rospy.logerr(f"Lỗi khi lập kế hoạch đường đi: {e}")
             self._set_state(RobotState.DEAD_END)
+            raise
 
     def initialize_video_writer(self):
         """Khởi tạo đối tượng VideoWriter."""
@@ -333,12 +340,6 @@ class JetBotController:
             rospy.loginfo("Đã lưu và đóng file video.")
         if hasattr(self, 'detector') and self.detector is not None:
             self.detector.stop_scanning()
-        if hasattr(self, 'temp_map_file') and self.temp_map_file:
-            try:
-                os.remove(self.temp_map_file)
-                rospy.loginfo(f"Đã xóa file map tạm thời: {self.temp_map_file}")
-            except Exception as e:
-                rospy.logwarn(f"Lỗi khi xóa file map tạm thời: {e}")
         rospy.loginfo("Đã giải phóng tài nguyên. Chương trình kết thúc.")
 
     def map_absolute_to_relative(self, target_direction_label, current_robot_direction):
