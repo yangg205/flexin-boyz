@@ -4,41 +4,58 @@ import rospy
 import time
 from collections import deque
 from jetbot import Robot
-from get_map import fetch_map  # tận dụng class get_map đã có
+from get_map import fetch_map
+from sensor_msgs.msg import LaserScan
+import numpy as np
+import math
+import argparse
+
+class LidarSensor:
+    """Wrapper đơn giản cho LIDAR để đo khoảng cách phía trước."""
+    def __init__(self, topic="/scan", forward_angle=10.0, min_distance=0.25):
+        self.latest_scan = None
+        self.forward_angle = forward_angle
+        self.min_distance = min_distance
+        self.sub = rospy.Subscriber(topic, LaserScan, self.callback)
+
+    def callback(self, scan: LaserScan):
+        self.latest_scan = scan
+
+    def get_forward_distance(self):
+        if self.latest_scan is None:
+            return float('inf')
+        scan = self.latest_scan
+        ranges = np.array(scan.ranges)
+        angle_increment_deg = math.degrees(scan.angle_increment)
+        center_index = len(ranges) // 2
+        offset = int(self.forward_angle / angle_increment_deg)
+        start = max(0, center_index - offset)
+        end = min(len(ranges), center_index + offset + 1)
+        forward_ranges = ranges[start:end]
+        valid_ranges = forward_ranges[np.isfinite(forward_ranges)]
+        if len(valid_ranges) == 0:
+            return float('inf')
+        return np.min(valid_ranges)
 
 class ProblemA:
-    """
-    Class giải quyết Problem A: điều khiển robot đi từ Start -> End
-    trên bản đồ tải từ API, tránh vật cản bằng LIDAR.
-    """
-
+    """Điều khiển robot từ Start -> End, tránh vật cản bằng LIDAR."""
     def __init__(self, token, map_type="map_z"):
-        # Khởi tạo robot Jetbot
         self.robot = Robot()
-        # TODO: Khởi tạo LIDAR
-        # self.lidar = LidarSensor()  # Giả sử module LidarSensor đã cài đặt
-        self.speed = 0.25   # tốc độ di chuyển
-        self.turn_time = 1  # thời gian rẽ 90 độ
-
-        # Load map từ API
+        self.speed = 0.25
+        self.turn_time = 1
+        self.lidar = LidarSensor()
         self.load_map_from_api(token, map_type)
-
-        # Tính đường đi ngắn nhất
         self.path = self.bfs_shortest_path()
-
-        # Giả sử hướng ban đầu là Bắc
+        if self.path is None:
+            raise ValueError("Không tìm được đường đi từ Start -> End")
         self.current_dir = "N"
 
     def load_map_from_api(self, token, map_type):
-        """
-        Lấy map từ API và chuyển thành cấu trúc nodes/edges/graph
-        """
         data = fetch_map(token=token, map_type=map_type)
         self.nodes = {n["id"]: n for n in data["nodes"]}
         self.edges = data["edges"]
         self.graph = {}
         for e in self.edges:
-            # Tính hướng từ source -> target dựa vào tọa độ
             src = self.nodes[e["source"]]
             tgt = self.nodes[e["target"]]
             dx, dy = tgt["x"] - src["x"], tgt["y"] - src["y"]
@@ -46,16 +63,14 @@ class ProblemA:
             elif dx == -1: direction = "W"
             elif dy == 1: direction = "S"
             elif dy == -1: direction = "N"
-            else: direction = "N"  # fallback
+            else: direction = "N"
             self.graph.setdefault(e["source"], []).append((e["target"], direction))
-        # Xác định start/end
-        self.start = next(n["id"] for n in data["nodes"] if n["type"].lower()=="start")
-        self.end = next(n["id"] for n in data["nodes"] if n["type"].lower()=="end")
+        self.start = next((n["id"] for n in data["nodes"] if n["type"].lower() == "start"), None)
+        self.end = next((n["id"] for n in data["nodes"] if n["type"].lower() == "end"), None)
+        if self.start is None or self.end is None:
+            raise ValueError("Không tìm thấy Start hoặc End trong map")
 
     def bfs_shortest_path(self):
-        """
-        Tìm đường đi ngắn nhất từ start -> end
-        """
         queue = deque([(self.start,[self.start])])
         visited = set([self.start])
         while queue:
@@ -69,19 +84,12 @@ class ProblemA:
         return None
 
     def get_edge_label(self, u, v):
-        """
-        Trả về hướng từ u -> v
-        """
         for nxt, label in self.graph.get(u, []):
             if nxt == v:
                 return label
         return None
 
     def relative_action(self, current_dir, target_dir):
-        """
-        Quyết định hành động (straight, left, right, turn_around)
-        dựa trên hướng hiện tại và hướng cần đi
-        """
         dirs = ["N","E","S","W"]
         ci, ti = dirs.index(current_dir), dirs.index(target_dir)
         diff = (ti-ci) % 4
@@ -91,20 +99,14 @@ class ProblemA:
         return "turn_around"
 
     def drive_action(self, action):
-        """
-        Di chuyển robot theo hành động
-        - straight: đi thẳng (kiểm tra vật cản bằng LIDAR)
-        - left/right/turn_around: rẽ
-        """
         if action == "straight":
-            # TODO: Kiểm tra vật cản trước khi đi thẳng
-            # lidar_distance = self.lidar.get_distance()
-            # if lidar_distance < 0.2:  # khoảng cách tối thiểu an toàn (m)
-            #     self.robot.stop()
-            #     rospy.logwarn("Vật cản phía trước! Dừng robot")
-            #     return
+            distance = self.lidar.get_forward_distance()
+            if distance < 0.2:
+                self.robot.stop()
+                rospy.logwarn(f"Vật cản phía trước ({distance:.2f} m)! Dừng robot")
+                return
             self.robot.set_motors(self.speed, self.speed)
-            time.sleep(1.0)  # chạy qua giao lộ
+            time.sleep(1.0)
         elif action == "right":
             self.robot.set_motors(self.speed, -self.speed)
             time.sleep(self.turn_time)
@@ -132,12 +134,12 @@ class ProblemA:
 
 def main():
     rospy.init_node("problem_a_node", anonymous=True)
-    # TODO: Thay token của team bạn vào đây
-    token = input("Nhập token của đội bạn: ").strip()
-    if not token:
-        print("Bạn phải nhập token!")
-        return
-    pa = ProblemA(token=token, map_type="map_z")
+    parser = argparse.ArgumentParser(description="Chạy robot Problem A")
+    parser.add_argument("--token", required=True, help="Token của đội")
+    parser.add_argument("--map_type", default="map_z", choices=["map_a","map_b","map_z"], help="Loại map")
+    args = parser.parse_args()
+
+    pa = ProblemA(token=args.token, map_type=args.map_type)
     pa.run()
 
 
