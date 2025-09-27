@@ -12,6 +12,7 @@ from sensor_msgs.msg import LaserScan, Image
 from opposite_detector import SimpleOppositeDetector
 from pyzbar.pyzbar import decode
 import paho.mqtt.client as mqtt
+from ultralytics import YOLO
 
 class RobotState(Enum):
     WAITING_FOR_LINE = 0
@@ -32,6 +33,14 @@ class JetBotController:
         self.setup_parameters()
         self.initialize_hardware()
         self.initialize_mqtt()
+
+        # Khởi tạo mô hình YOLOv8
+        try:
+            self.yolo_model = YOLO('best.pt')  # Đường dẫn tới file best.pt
+            rospy.loginfo("Đã tải mô hình YOLOv8 thành công.")
+        except Exception as e:
+            rospy.logerr(f"Lỗi khi tải mô hình YOLOv8: {e}")
+            self.yolo_model = None
 
         self.video_writer = None
         self.initialize_video_writer()
@@ -71,10 +80,29 @@ class JetBotController:
         cv2.rectangle(debug_frame, (0, self.LOOKAHEAD_ROI_Y), (self.WIDTH-1, self.LOOKAHEAD_ROI_Y + self.LOOKAHEAD_ROI_H), (0, 255, 255), 1)
         state_text = f"State: {self.current_state.name}"
         cv2.putText(debug_frame, state_text, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        
         if self.current_state == RobotState.DRIVING_STRAIGHT:
             line_center = self._get_line_center(image, self.ROI_Y, self.ROI_H)
             if line_center is not None:
                 cv2.line(debug_frame, (line_center, self.ROI_Y), (line_center, self.ROI_Y + self.ROI_H), (0, 0, 255), 2)
+        
+        # Vẽ các hộp bao của YOLO khi xử lý giao lộ
+        if self.yolo_model is not None and self.current_state == RobotState.HANDLING_EVENT:
+            try:
+                results = self.yolo_model(debug_frame)
+                for result in results:
+                    for box in result.boxes:
+                        class_id = int(box.cls)
+                        class_name = self.yolo_model.names[class_id]
+                        confidence = float(box.conf)
+                        if confidence > 0.5 and class_name in self.PRESCRIPTIVE_SIGNS | self.PROHIBITIVE_SIGNS:
+                            x1, y1, x2, y2 = map(int, box.xyxy[0])
+                            cv2.rectangle(debug_frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                            label = f"{class_name} {confidence:.2f}"
+                            cv2.putText(debug_frame, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1, cv2.LINE_AA)
+            except Exception as e:
+                rospy.logerr(f"Lỗi khi vẽ kết quả YOLO: {e}")
+        
         return debug_frame
 
     def setup_parameters(self):
@@ -122,6 +150,15 @@ class JetBotController:
             Direction.SOUTH: -135,
             Direction.WEST: 135
         }
+        # Ánh xạ tên lớp YOLO (nếu cần)
+        self.YOLO_CLASS_MAPPING = {
+            'left': 'L',
+            'right': 'R',
+            'forward': 'F',
+            'no_left': 'NL',
+            'no_right': 'NR',
+            'no_forward': 'NF'
+        }
 
     def initialize_hardware(self):
         try:
@@ -157,11 +194,12 @@ class JetBotController:
             if 'rgb' in image_msg.encoding.lower():
                 cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
             self.latest_image = cv2.resize(cv_image, (self.WIDTH, self.HEIGHT))
-            # Hiển thị hình ảnh với thông tin debug
-            debug_frame = self.draw_debug_info(self.latest_image)
-            if debug_frame is not None:
-                cv2.imshow("JetBot Camera", debug_frame)
-                cv2.waitKey(1)
+            
+            # --- Tắt phần hiển thị GUI để chạy headless ---
+            # debug_frame = self.draw_debug_info(self.latest_image)
+            # if debug_frame is not None:
+            #     cv2.imshow("JetBot Camera", debug_frame)
+            #     cv2.waitKey(1)
         except Exception as e:
             rospy.logerr(f"Lỗi chuyển đổi ảnh: {e}")
 
@@ -306,7 +344,7 @@ class JetBotController:
         self.robot.set_motors(left_motor, right_motor)
 
     def scan_for_signs(self):
-        """Scan for QR codes and other signs (simulated YOLO detections)."""
+        """Scan for QR codes and YOLO-based sign detections."""
         detections = []
         if self.latest_image is None:
             rospy.logwarn("No image available for sign scanning.")
@@ -319,10 +357,25 @@ class JetBotController:
             detections.append({'class_name': 'qr_code', 'value': qr_data})
             rospy.loginfo(f"Detected QR code: {qr_data}")
 
-        # Placeholder for YOLO-based sign detection (L, R, F, NL, NR, NF)
-        # TODO: Replace with actual YOLO model inference
-        # For testing, uncomment the following line to simulate sign detection
-        # detections.extend([{'class_name': 'L'}, {'class_name': 'NF'}])
+        # YOLO-based sign detection
+        if self.yolo_model is not None:
+            try:
+                results = self.yolo_model(self.latest_image)
+                for result in results:
+                    for box in result.boxes:
+                        class_id = int(box.cls)
+                        class_name = self.yolo_model.names[class_id]
+                        confidence = float(box.conf)
+                        # Ánh xạ tên lớp nếu cần
+                        class_name = self.YOLO_CLASS_MAPPING.get(class_name, class_name)
+                        if confidence > 0.5 and class_name in self.PRESCRIPTIVE_SIGNS | self.PROHIBITIVE_SIGNS:
+                            detections.append({'class_name': class_name})
+                            rospy.loginfo(f"Detected sign: {class_name} (Confidence: {confidence:.2f})")
+            except Exception as e:
+                rospy.logerr(f"Lỗi khi chạy YOLOv8: {e}")
+        else:
+            rospy.logwarn("Mô hình YOLOv8 không được tải. Bỏ qua phát hiện biển báo.")
+
         return detections
 
     def handle_intersection(self):
