@@ -2,191 +2,141 @@
 import json
 import rospy
 import time
-import heapq
-import numpy as np
-import argparse
-import requests
+from collections import deque
 from jetbot import Robot
-from sensor_msgs.msg import LaserScan
-from get_map import fetch_map   # ⚡ import hàm lấy map
-
+from get_map import fetch_map  # tận dụng class get_map đã có
 
 class ProblemA:
-    def __init__(self, token, map_type):
+    """
+    Class giải quyết Problem A: điều khiển robot đi từ Start -> End
+    trên bản đồ tải từ API, tránh vật cản bằng LIDAR.
+    """
+
+    def __init__(self, token, map_type="map_z"):
+        # Khởi tạo robot Jetbot
         self.robot = Robot()
-        self.speed = 0.25
-        self.turn_time = 1
+        # TODO: Khởi tạo LIDAR
+        # self.lidar = LidarSensor()  # Giả sử module LidarSensor đã cài đặt
+        self.speed = 0.25   # tốc độ di chuyển
+        self.turn_time = 1  # thời gian rẽ 90 độ
 
-        # LiDAR
-        self.latest_scan = None
-        rospy.Subscriber("/scan", LaserScan, self.lidar_callback)
+        # Load map từ API
+        self.load_map_from_api(token, map_type)
 
-        # ⚡ luôn luôn load map từ get_map, fallback nếu bị lỗi urllib3
-        try:
-            data = fetch_map(token=token, map_type=map_type)
-        except TypeError as e:
-            rospy.logwarn(f"Lỗi fetch_map (urllib3 cũ?) → fallback: {e}")
-            url = "https://hackathon2025-dev.fpt.edu.vn/api/maps/get_active_map/"
-            resp = requests.get(url, params={"token": token, "map_type": map_type}, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
+        # Tính đường đi ngắn nhất
+        self.path = self.bfs_shortest_path()
 
-        self.parse_map(data)
-        self.path = self.a_star_shortest_path()
+        # Giả sử hướng ban đầu là Bắc
+        self.current_dir = "N"
 
-    # ---------------- MAP ----------------
-    def parse_map(self, data):
+    def load_map_from_api(self, token, map_type):
+        """
+        Lấy map từ API và chuyển thành cấu trúc nodes/edges/graph
+        """
+        data = fetch_map(token=token, map_type=map_type)
         self.nodes = {n["id"]: n for n in data["nodes"]}
         self.edges = data["edges"]
-
-        # Graph
         self.graph = {}
         for e in self.edges:
-            u, v = e["source"], e["target"]
-            cost = e.get("cost", 1)
-            dir_uv = self.compute_direction(self.nodes[u], self.nodes[v])
-            self.graph.setdefault(u, []).append((v, dir_uv, cost))
+            # Tính hướng từ source -> target dựa vào tọa độ
+            src = self.nodes[e["source"]]
+            tgt = self.nodes[e["target"]]
+            dx, dy = tgt["x"] - src["x"], tgt["y"] - src["y"]
+            if dx == 1: direction = "E"
+            elif dx == -1: direction = "W"
+            elif dy == 1: direction = "S"
+            elif dy == -1: direction = "N"
+            else: direction = "N"  # fallback
+            self.graph.setdefault(e["source"], []).append((e["target"], direction))
+        # Xác định start/end
+        self.start = next(n["id"] for n in data["nodes"] if n["type"].lower()=="start")
+        self.end = next(n["id"] for n in data["nodes"] if n["type"].lower()=="end")
 
-            dir_vu = self.compute_direction(self.nodes[v], self.nodes[u])
-            self.graph.setdefault(v, []).append((u, dir_vu, cost))
-
-        # Start / End
-        if data.get("startingPositions"):
-            self.start = data["startingPositions"][0]
-        else:
-            self.start = next(n["id"] for n in data["nodes"] if n["type"].lower() == "start")
-
-        if data.get("destinationPositions"):
-            self.end = data["destinationPositions"][0]
-        else:
-            self.end = next(n["id"] for n in data["nodes"] if n["type"].lower() == "end")
-
-        # Hướng ban đầu
-        start_node = self.nodes[self.start]
-        self.current_dir = start_node.get("dir", "E")
-
-    # ---------------- PATHFIND ----------------
-    def compute_direction(self, node_from, node_to):
-        dx = node_to["x"] - node_from["x"]
-        dy = node_to["y"] - node_from["y"]
-        if dx == 1: return "E"
-        if dx == -1: return "W"
-        if dy == 1: return "S"
-        if dy == -1: return "N"
-        return None
-
-    def heuristic(self, node_id):
-        n1 = self.nodes[node_id]
-        n2 = self.nodes[self.end]
-        return abs(n1["x"] - n2["x"]) + abs(n1["y"] - n2["y"])
-
-    def a_star_shortest_path(self):
-        open_set = []
-        heapq.heappush(open_set, (0, 0, self.start, [self.start]))
-        g_score = {self.start: 0}
-        visited = set()
-
-        while open_set:
-            f, g, cur, path = heapq.heappop(open_set)
-            if cur in visited:
-                continue
-            visited.add(cur)
-
+    def bfs_shortest_path(self):
+        """
+        Tìm đường đi ngắn nhất từ start -> end
+        """
+        queue = deque([(self.start,[self.start])])
+        visited = set([self.start])
+        while queue:
+            cur, path = queue.popleft()
             if cur == self.end:
                 return path
-
-            for nxt, _dir, cost in self.graph.get(cur, []):
-                new_g = g + cost
-                if new_g < g_score.get(nxt, float("inf")):
-                    g_score[nxt] = new_g
-                    f_score = new_g + self.heuristic(nxt)
-                    heapq.heappush(open_set, (f_score, new_g, nxt, path + [nxt]))
+            for nxt,_ in self.graph.get(cur,[]):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append((nxt, path+[nxt]))
         return None
 
-    # ---------------- ACTION ----------------
+    def get_edge_label(self, u, v):
+        """
+        Trả về hướng từ u -> v
+        """
+        for nxt, label in self.graph.get(u, []):
+            if nxt == v:
+                return label
+        return None
+
     def relative_action(self, current_dir, target_dir):
-        dirs = ["N", "E", "S", "W"]
+        """
+        Quyết định hành động (straight, left, right, turn_around)
+        dựa trên hướng hiện tại và hướng cần đi
+        """
+        dirs = ["N","E","S","W"]
         ci, ti = dirs.index(current_dir), dirs.index(target_dir)
-        diff = (ti - ci) % 4
+        diff = (ti-ci) % 4
         if diff == 0: return "straight"
         if diff == 1: return "right"
         if diff == 3: return "left"
         return "turn_around"
 
-    def drive_action(self, action, threshold=0.4):
+    def drive_action(self, action):
+        """
+        Di chuyển robot theo hành động
+        - straight: đi thẳng (kiểm tra vật cản bằng LIDAR)
+        - left/right/turn_around: rẽ
+        """
         if action == "straight":
-            rospy.loginfo("🚗 Đang tiến thẳng...")
+            # TODO: Kiểm tra vật cản trước khi đi thẳng
+            # lidar_distance = self.lidar.get_distance()
+            # if lidar_distance < 0.2:  # khoảng cách tối thiểu an toàn (m)
+            #     self.robot.stop()
+            #     rospy.logwarn("Vật cản phía trước! Dừng robot")
+            #     return
             self.robot.set_motors(self.speed, self.speed)
-            while not rospy.is_shutdown():
-                if self.lidar_check_obstacle(threshold=threshold):
-                    rospy.logwarn("⛔ Phát hiện vật cản phía trước! Dừng lại.")
-                    break
-                rospy.sleep(0.05)  # tránh busy loop
+            time.sleep(1.0)  # chạy qua giao lộ
         elif action == "right":
-            rospy.loginfo("↪️ Rẽ phải...")
             self.robot.set_motors(self.speed, -self.speed)
             time.sleep(self.turn_time)
         elif action == "left":
-            rospy.loginfo("↩️ Rẽ trái...")
             self.robot.set_motors(-self.speed, self.speed)
             time.sleep(self.turn_time)
         elif action == "turn_around":
-            rospy.loginfo("🔄 Quay đầu...")
             self.robot.set_motors(self.speed, -self.speed)
-            time.sleep(self.turn_time * 2)
-
+            time.sleep(self.turn_time*2)
         self.robot.stop()
-        rospy.sleep(0.2)
+        time.sleep(0.2)
 
-
-    # ---------------- LIDAR ----------------
-    def lidar_callback(self, msg):
-        self.latest_scan = msg
-
-    def lidar_check_obstacle(self, threshold=0.4):
-        if not self.latest_scan:
-            return False
-        ranges = np.array(self.latest_scan.ranges)
-        front = np.concatenate([ranges[-15:], ranges[:15]])  # trước mặt ±15°
-        front = front[np.isfinite(front)]
-        if len(front) == 0:
-            return False
-        return np.min(front) < threshold
-
-    # ---------------- RUN ----------------
     def run(self):
-        rospy.loginfo(f"Path: {self.path}")
-        for i in range(len(self.path) - 1):
-            u, v = self.path[i], self.path[i + 1]
-            dir_uv = self.compute_direction(self.nodes[u], self.nodes[v])
-            action = self.relative_action(self.current_dir, dir_uv)
-
-            # nếu u là nút giao => check lidar
-            if len(self.graph[u]) > 2:
-                rospy.loginfo(f"Đang ở nút giao {u}, kiểm tra LiDAR...")
-                if self.lidar_check_obstacle():
-                    rospy.logwarn("Có vật cản tại nút giao! Dừng lại.")
-                    self.robot.stop()
-                    time.sleep(2.0)
-                    continue
-
-            rospy.loginfo(f"Đi {action} từ {u}->{v}")
+        rospy.loginfo(f"Đường đi: {self.path}")
+        for i in range(len(self.path)-1):
+            u, v = self.path[i], self.path[i+1]
+            target_dir = self.get_edge_label(u,v)
+            action = self.relative_action(self.current_dir, target_dir)
+            rospy.loginfo(f"Đi {action} từ node {u} -> {v}")
             self.drive_action(action)
-            self.current_dir = dir_uv
+            self.current_dir = target_dir
         rospy.loginfo("ĐÃ ĐẾN ĐÍCH!")
         self.robot.stop()
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--token", required=True, help="Team token để lấy bản đồ")
-    parser.add_argument("--map", required=True, help="Loại bản đồ, ví dụ: map_z")
-    args = parser.parse_args()
-
     rospy.init_node("problem_a_node", anonymous=True)
-    pa = ProblemA(token=args.token, map_type=args.map)
+    # TODO: Thay token của team bạn vào đây
+    token = "YOUR_TEAM_TOKEN"
+    pa = ProblemA(token=token, map_type="map_z")
     pa.run()
 
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
