@@ -4,20 +4,21 @@ import cv2
 from ultralytics import YOLO
 import time
 
-# Khởi tạo camera và robot
+# Khởi tạo camera CSI và robot
 camera = Camera.instance(width=300, height=300)
 robot = Robot()
 
-# Load YOLO model
-model_path = 'best.pt'  # hoặc .onnx nếu bạn export
+# Load YOLO model (thay bằng đường dẫn model của bạn)
+model_path = 'best.pt'
 model = YOLO(model_path)
 
 try:
     while True:
-        img = camera.value  # lấy frame từ camera CSI
+        # Lấy frame từ camera
+        img = camera.value
         img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         
-        # YOLO detection
+        # Chạy YOLO
         results = model(img_bgr)
         for result in results:
             for box in result.boxes:
@@ -27,7 +28,7 @@ try:
         # Chuyển ảnh về JPEG để hiển thị trong notebook
         _, jpeg = cv2.imencode('.jpg', img_bgr)
         display(Image(data=jpeg.tobytes()))
-        clear_output(wait=True)
+        clear_output(wait=True)  # xóa frame trước để update frame mới
         
         time.sleep(0.05)  # ~20 FPS
 except KeyboardInterrupt:
