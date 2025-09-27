@@ -17,7 +17,7 @@ def gstreamer_pipeline(capture_width=640, capture_height=480,
 
 def main():
     # Load YOLO model (.onnx nhẹ cho Nano)
-    model_path = "/home/jetbot/flexin-boyz/best.onnx"  # Thay đường dẫn nếu khác
+    model_path = "/home/jetbot/flexin-boyz/model/best.onnx"  # Thay đường dẫn nếu khác
     model = YOLO(model_path)
     print("[INFO] YOLO model loaded.")
 
