@@ -2,46 +2,109 @@
 import json
 import rospy
 import time
-from collections import deque
+import requests
+import heapq
 from jetbot import Robot
 
+DOMAIN = "https://hackathon2025-dev.fpt.edu.vn"
+MAP_ENDPOINT = "/api/maps/get_active_map/"
+
 class ProblemA:
-    def __init__(self, map_file="map.json"):
+    def __init__(self, token=None, map_type="map_z", local_file="map.json"):
         self.robot = Robot()
         self.speed = 0.25   # tăng tốc hơn bình thường
         self.turn_time = 1  # thời gian rẽ 90 độ (tối ưu hóa)
-        self.load_map(map_file)
-        self.path = self.bfs_shortest_path()
-        self.current_dir = "N"  # giả sử ban đầu hướng Bắc
 
-    def load_map(self, map_file):
+        # Load map từ server nếu có token, nếu không thì dùng file local
+        if token:
+            data = self.load_map_from_server(token, map_type)
+        else:
+            data = self.load_map_from_file(local_file)
+
+        self.parse_map(data)
+        self.path = self.a_star_shortest_path()
+
+    def load_map_from_server(self, token, map_type):
+        url = DOMAIN + MAP_ENDPOINT
+        resp = requests.get(url, params={"token": token, "map_type": map_type})
+        resp.raise_for_status()
+        rospy.loginfo("Đã tải bản đồ từ server")
+        return resp.json()
+
+    def load_map_from_file(self, map_file):
         with open(map_file, "r") as f:
             data = json.load(f)
+        rospy.loginfo("Đã tải bản đồ từ file local")
+        return data
+
+    def parse_map(self, data):
         self.nodes = {n["id"]: n for n in data["nodes"]}
         self.edges = data["edges"]
+
+        # Xây dựng graph kề với hướng
         self.graph = {}
         for e in self.edges:
-            self.graph.setdefault(e["source"], []).append((e["target"], e["label"]))
-        self.start = next(n["id"] for n in data["nodes"] if n["type"]=="start")
-        self.end = next(n["id"] for n in data["nodes"] if n["type"]=="end")
+            u, v = e["source"], e["target"]
+            cost = e.get("cost", 1)
+            dir_uv = self.compute_direction(self.nodes[u], self.nodes[v])
+            self.graph.setdefault(u, []).append((v, dir_uv, cost))
 
-    def bfs_shortest_path(self):
-        queue = deque([(self.start,[self.start])])
-        visited = set([self.start])
-        while queue:
-            cur, path = queue.popleft()
-            if cur == self.end:
-                return path
-            for nxt,_ in self.graph.get(cur,[]):
-                if nxt not in visited:
-                    visited.add(nxt)
-                    queue.append((nxt, path+[nxt]))
+            # nếu map vô hướng thì thêm cạnh ngược
+            dir_vu = self.compute_direction(self.nodes[v], self.nodes[u])
+            self.graph.setdefault(v, []).append((u, dir_vu, cost))
+
+        # Lấy node Start
+        if data.get("startingPositions"):
+            self.start = data["startingPositions"][0]
+        else:
+            self.start = next(n["id"] for n in data["nodes"] if n["type"].lower() == "start")
+
+        # Lấy node End
+        if data.get("destinationPositions") and len(data["destinationPositions"]) > 0:
+            self.end = data["destinationPositions"][0]
+        else:
+            self.end = next(n["id"] for n in data["nodes"] if n["type"].lower() == "end")
+
+        # Hướng ban đầu
+        start_node = self.nodes[self.start]
+        self.current_dir = start_node.get("dir", "E")
+
+    def compute_direction(self, node_from, node_to):
+        dx = node_to["x"] - node_from["x"]
+        dy = node_to["y"] - node_from["y"]
+        if dx == 1: return "E"
+        if dx == -1: return "W"
+        if dy == 1: return "S"   # y tăng nghĩa là đi xuống
+        if dy == -1: return "N"  # y giảm nghĩa là đi lên
         return None
 
-    def get_edge_label(self, u, v):
-        for e in self.edges:
-            if e["source"]==u and e["target"]==v:
-                return e["label"]
+    def heuristic(self, node_id):
+        """Heuristic A*: khoảng cách Manhattan"""
+        n1 = self.nodes[node_id]
+        n2 = self.nodes[self.end]
+        return abs(n1["x"] - n2["x"]) + abs(n1["y"] - n2["y"])
+
+    def a_star_shortest_path(self):
+        open_set = []
+        heapq.heappush(open_set, (0, 0, self.start, [self.start]))
+        g_score = {self.start: 0}
+        visited = set()
+
+        while open_set:
+            f, g, cur, path = heapq.heappop(open_set)
+            if cur in visited:
+                continue
+            visited.add(cur)
+
+            if cur == self.end:
+                return path
+
+            for nxt, _dir, cost in self.graph.get(cur, []):
+                new_g = g + cost
+                if new_g < g_score.get(nxt, float("inf")):
+                    g_score[nxt] = new_g
+                    f_score = new_g + self.heuristic(nxt)
+                    heapq.heappush(open_set, (f_score, new_g, nxt, path + [nxt]))
         return None
 
     def relative_action(self, current_dir, target_dir):
@@ -56,7 +119,7 @@ class ProblemA:
     def drive_action(self, action):
         if action=="straight":
             self.robot.set_motors(self.speed, self.speed)
-            time.sleep(1.0)  # chạy thẳng qua giao lộ
+            time.sleep(1.0)
         elif action=="right":
             self.robot.set_motors(self.speed, -self.speed)
             time.sleep(self.turn_time)
@@ -73,17 +136,21 @@ class ProblemA:
         rospy.loginfo(f"Path: {self.path}")
         for i in range(len(self.path)-1):
             u, v = self.path[i], self.path[i+1]
-            target_dir = self.get_edge_label(u,v)
-            action = self.relative_action(self.current_dir, target_dir)
+            # tìm hướng từ u->v
+            dir_uv = self.compute_direction(self.nodes[u], self.nodes[v])
+            action = self.relative_action(self.current_dir, dir_uv)
             rospy.loginfo(f"Đi {action} từ {u}->{v}")
             self.drive_action(action)
-            self.current_dir = target_dir
+            self.current_dir = dir_uv
         rospy.loginfo("ĐÃ ĐẾN ĐÍCH!")
         self.robot.stop()
 
+
 def main():
     rospy.init_node("problem_a_node", anonymous=True)
-    pa = ProblemA("map.json")
+    # TODO: thay YOUR_TEAM_TOKEN
+    token = "c7f272d7cff632a6fd875954774ed7a7"  # hoặc "YOUR_TEAM_TOKEN" nếu muốn lấy map trực tiếp từ server
+    pa = ProblemA(token=token, map_type="map_z")
     pa.run()
 
 if __name__=="__main__":
