@@ -191,16 +191,16 @@ class JetBotController:
         self.ROI_Y = int(self.HEIGHT * 0.85)
         self.ROI_H = int(self.HEIGHT * 0.15)
         self.ROI_CENTER_WIDTH_PERCENT = 0.5
-        self.LOOKAHEAD_ROI_Y = int(self.HEIGHT * 0.60)
-        self.LOOKAHEAD_ROI_H = int(self.HEIGHT * 0.15)
-        self.CORRECTION_GAIN = 0.5
-        self.SAFE_ZONE_PERCENT = 0.3
+        self.LOOKAHEAD_ROI_Y = int(self.HEIGHT * 0.50)
+        self.LOOKAHEAD_ROI_H = int(self.HEIGHT * 0.20)
+        self.CORRECTION_GAIN = 0.3
+        self.SAFE_ZONE_PERCENT = 0.4
         self.LINE_COLOR_LOWER = np.array([0, 0, 0])
         self.LINE_COLOR_UPPER = np.array([180, 255, 75])
         self.INTERSECTION_CLEARANCE_DURATION = 1.5
-        self.INTERSECTION_APPROACH_DURATION = 0.5
+        self.INTERSECTION_APPROACH_DURATION = 0.8
         self.LINE_REACQUIRE_TIMEOUT = 3.0
-        self.SCAN_PIXEL_THRESHOLD = 100
+        self.SCAN_PIXEL_THRESHOLD = 200
         self.current_state = None
         self.DIRECTIONS = [Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST]
         self.current_direction_index = 1
@@ -267,8 +267,9 @@ class JetBotController:
                     self.robot.stop()
                     rate.sleep()
                     continue
-                if self.detector.process_detection():
-                    rospy.loginfo("SỰ KIỆN (LiDAR): Phát hiện giao lộ. Dừng ngay lập tức.")
+                lookahead_line_center = self._get_line_center(self.latest_image, self.LOOKAHEAD_ROI_Y, self.LOOKAHEAD_ROI_H)
+                if self.detector.process_detection() and lookahead_line_center is None:
+                    rospy.loginfo("SỰ KIỆN (LiDAR + Camera): Phát hiện giao lộ. Dừng ngay lập tức.")
                     self.robot.stop()
                     time.sleep(0.5)
                     self.current_node_id = self.target_node_id
@@ -280,7 +281,6 @@ class JetBotController:
                         self._set_state(RobotState.HANDLING_EVENT)
                         self.handle_intersection()
                     continue
-                lookahead_line_center = self._get_line_center(self.latest_image, self.LOOKAHEAD_ROI_Y, self.LOOKAHEAD_ROI_H)
                 if lookahead_line_center is None:
                     rospy.logwarn("SỰ KIỆN (Dự báo): Vạch kẻ đường biến mất ở phía xa. Chuẩn bị vào giao lộ.")
                     self._set_state(RobotState.APPROACHING_INTERSECTION)
@@ -396,9 +396,11 @@ class JetBotController:
         final_mask = cv2.bitwise_and(color_mask, focus_mask)
         _, contours, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
+            rospy.logwarn(f"No contours found in ROI at y={roi_y}")
             return None
         c = max(contours, key=cv2.contourArea)
         if cv2.contourArea(c) < self.SCAN_PIXEL_THRESHOLD:
+            rospy.logwarn(f"Contour area {cv2.contourArea(c)} below threshold {self.SCAN_PIXEL_THRESHOLD}")
             return None
         M = cv2.moments(c)
         if M["m00"] > 0:
