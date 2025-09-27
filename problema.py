@@ -208,6 +208,13 @@ class JetBotController:
         self.VIDEO_OUTPUT_FILENAME = 'jetbot_run.avi'
         self.VIDEO_FPS = 20
         self.VIDEO_FOURCC = cv2.VideoWriter_fourcc(*'MJPG')
+        # Define direction label to enum mapping
+        self.LABEL_TO_DIRECTION_ENUM = {
+            'N': Direction.NORTH,
+            'E': Direction.EAST,
+            'S': Direction.SOUTH,
+            'W': Direction.WEST
+        }
 
     def initialize_hardware(self):
         try:
@@ -344,7 +351,9 @@ class JetBotController:
 
     def map_absolute_to_relative(self, target_direction_label, current_robot_direction):
         target_dir = self.LABEL_TO_DIRECTION_ENUM.get(target_direction_label)
-        if target_dir is None: return None
+        if target_dir is None:
+            rospy.logerr(f"Hướng không hợp lệ: {target_direction_label}")
+            return None
         current_idx = current_robot_direction.value
         target_idx = target_dir.value
         diff = (target_idx - current_idx + 4) % 4 
@@ -373,7 +382,8 @@ class JetBotController:
         return None
     
     def _get_line_center(self, image, roi_y, roi_h):
-        if image is None: return None
+        if image is None:
+            return None
         roi = image[roi_y : roi_y + roi_h, :]
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         color_mask = cv2.inRange(hsv, self.LINE_COLOR_LOWER, self.LINE_COLOR_UPPER)
@@ -384,7 +394,7 @@ class JetBotController:
         end_x = start_x + center_width
         cv2.rectangle(focus_mask, (start_x, 0), (end_x, roi_height), 255, -1)
         final_mask = cv2.bitwise_and(color_mask, focus_mask)
-        _, contours, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        _, contours, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APROX_SIMPLE)
         if not contours:
             return None
         c = max(contours, key=cv2.contourArea)
@@ -420,6 +430,10 @@ class JetBotController:
                 self._set_state(RobotState.DEAD_END) 
                 return
             planned_action = self.map_absolute_to_relative(planned_direction_label, current_direction)
+            if planned_action is None:
+                rospy.logerr("Không thể xác định hành động từ hướng được đề xuất.")
+                self._set_state(RobotState.DEAD_END)
+                return
             rospy.loginfo(f"Kế hoạch A* đề xuất: Đi {planned_action} (hướng {planned_direction_label})")
             final_decision = planned_action
             break
@@ -460,11 +474,12 @@ class JetBotController:
         self._record_frame()
     
     def _does_path_exist_in_frame(self, image):
-        if image is None: return False
+        if image is None: 
+            return False
         roi = image[self.ROI_Y : self.ROI_Y + self.ROI_H, :]
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self.LINE_COLOR_LOWER, self.LINE_COLOR_UPPER)
-        _img, contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        _img, contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APROX_SIMPLE)
         return bool(contours) and cv2.contourArea(max(contours, key=cv2.contourArea)) > self.SCAN_PIXEL_THRESHOLD
     
     def scan_for_available_paths_proactive(self):
