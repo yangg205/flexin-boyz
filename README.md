@@ -9,6 +9,7 @@ python3 ros_lidar_follower.py
 ```
 cách chạy các problem 
 python3 problema/b/c.py --token YOUR_TEAM_TOKEN --map map_z
-
+(giả lập môi trường giả python --version 3.8)
+python downgrade_op_code.py
 
 ---

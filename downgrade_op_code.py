@@ -9,11 +9,11 @@ import onnx
 
 # --- CẤU HÌNH ---
 # Đường dẫn tới file ONNX bị lỗi (file bạn vừa export từ YOLOv8)
-INPUT_ONNX_FILE = "/model/best.onnx"
+INPUT_ONNX_FILE = "/home/jetbot/flexin-boyz/model/best.onnx"
 
 # Đường dẫn để lưu file ONNX đã được sửa lỗi
 # Đặt tên khác để không ghi đè lên file gốc, phòng trường hợp cần làm lại
-OUTPUT_ONNX_FILE = "/model/best_jetsons_compatible1.onnx"
+OUTPUT_ONNX_FILE = "/home/jetbot/flexin-boyz/model/best_jetsons_compatible1.onnx"
 
 # Phiên bản IR_VERSION mục tiêu.
 # Jetson của bạn hỗ trợ tối đa là 8, nên chúng ta sẽ đặt là 8.
