@@ -394,7 +394,7 @@ class JetBotController:
         end_x = start_x + center_width
         cv2.rectangle(focus_mask, (start_x, 0), (end_x, roi_height), 255, -1)
         final_mask = cv2.bitwise_and(color_mask, focus_mask)
-        _, contours, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APROX_SIMPLE)
+        _, contours, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return None
         c = max(contours, key=cv2.contourArea)
@@ -479,7 +479,7 @@ class JetBotController:
         roi = image[self.ROI_Y : self.ROI_Y + self.ROI_H, :]
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self.LINE_COLOR_LOWER, self.LINE_COLOR_UPPER)
-        _img, contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APROX_SIMPLE)
+        _img, contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         return bool(contours) and cv2.contourArea(max(contours, key=cv2.contourArea)) > self.SCAN_PIXEL_THRESHOLD
     
     def scan_for_available_paths_proactive(self):
