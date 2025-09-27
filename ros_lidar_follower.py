@@ -122,6 +122,17 @@ class JetBotController:
     def handle_event(self):
         rospy.loginfo("Xử lý sự kiện...")
         detections = self.detect_with_yolo(self.latest_image)
+        
+        # Log tất cả các object mà camera nhìn thấy
+        if detections:
+            rospy.loginfo("Camera nhìn thấy các object sau:")
+            for det in detections:
+                rospy.loginfo(f" - {det['class_name']} (confidence: {det['confidence']:.2f}) "
+                            f"box: {det['box']}")
+        else:
+            rospy.loginfo("Không phát hiện object nào.")
+        
+        # Vẫn giữ logic gửi MQTT cho QR / Math problem
         for det in detections:
             if det['class_name'] == 'qr_code':
                 rospy.loginfo("Found QR. Publishing...")
@@ -129,6 +140,7 @@ class JetBotController:
             elif det['class_name'] == 'math_problem':
                 rospy.loginfo("Found Math problem. Publishing...")
                 self.mqtt_client.publish(self.MQTT_DATA_TOPIC, '{"type":"MATH","value":"2+2=4"}')
+
 
     def run(self):
         rate = rospy.Rate(20)
