@@ -1,31 +1,21 @@
-#!/usr/bin/env python3
-import rospy
-from sensor_msgs.msg import Image
+from jetbot import Camera
 from flask import Flask, Response
-import numpy as np
 import cv2
 
-app = Flask(__name__)
-latest_frame = None
+camera = Camera.instance(width=300, height=300)
 
-def image_callback(msg):
-    global latest_frame
-    arr = np.frombuffer(msg.data, dtype=np.uint8)
-    # Nếu encoding là rgb8
-    img = arr.reshape(msg.height, msg.width, 3)
-    latest_frame = cv2.imencode('.jpg', img)[1].tobytes()
+app = Flask(__name__)
+
+def gen_frames():
+    while True:
+        frame = camera.value
+        _, buffer = cv2.imencode('.jpg', frame)
+        frame_bytes = buffer.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
 @app.route('/video_feed')
 def video_feed():
-    def gen():
-        while True:
-            if latest_frame is None:
-                continue
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + latest_frame + b'\r\n')
-    return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
-if __name__ == "__main__":
-    rospy.init_node('camera_stream_node')
-    rospy.Subscriber('/csi_cam_0/image_raw', Image, image_callback)
-    app.run(host='0.0.0.0', port=5001)
+app.run(host='0.0.0.0', port=5000)
