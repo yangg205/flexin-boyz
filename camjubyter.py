@@ -2,12 +2,18 @@ import cv2
 from IPython.display import display, clear_output
 import ipywidgets as widgets
 
-# Mở camera CSI
-cap = cv2.VideoCapture(0)  # /dev/video0
+# GStreamer pipeline cho camera CSI
+gst_str = (
+    "nvarguscamerasrc ! "
+    "video/x-raw(memory:NVMM), width=640, height=480, format=NV12, framerate=30/1 ! "
+    "nvvidconv ! video/x-raw, format=BGRx ! videoconvert ! appsink"
+)
+
+cap = cv2.VideoCapture(gst_str, cv2.CAP_GSTREAMER)
+
 if not cap.isOpened():
     raise RuntimeError("Không mở được camera CSI")
 
-# Widget hiển thị video
 image_widget = widgets.Image(format='jpeg')
 display(image_widget)
 
@@ -17,8 +23,7 @@ try:
         if not ret:
             continue
 
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        _, jpeg = cv2.imencode('.jpg', frame_rgb)
+        _, jpeg = cv2.imencode('.jpg', frame)
         image_widget.value = jpeg.tobytes()
 
         clear_output(wait=True)
@@ -28,4 +33,4 @@ except KeyboardInterrupt:
     print("Dừng stream camera")
 
 finally:
-    cap.release()  # giải phóng camera
+    cap.release()
