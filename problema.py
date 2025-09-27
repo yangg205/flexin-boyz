@@ -72,11 +72,13 @@ class JetBotController:
         self.latest_scan = None
         self.latest_image = None
         self.detector = SimpleOppositeDetector()
-        rospy.Subscriber('/scan', LaserScan, self.detector.callback)
+        rospy.Subscriber('/scan', LaserScan, self.lidar_callback)  # Updated to custom callback
         rospy.Subscriber('/csi_cam_0/image_raw', Image, self.camera_callback)
         rospy.loginfo("Đã đăng ký vào các topic /scan và /csi_cam_0/image_raw.")
         self.state_change_time = rospy.get_time()
         self._set_state(RobotState.WAITING_FOR_LINE, initial=True)
+        self.lidar_confidence = 0  # Track LiDAR detection confidence
+        self.lidar_buffer = []  # Buffer for smoothing LiDAR detections
         rospy.loginfo("Khởi tạo hoàn tất. Sẵn sàng hoạt động.")
 
     def create_session_with_retries(self, total_retries=3, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504)):
@@ -88,7 +90,7 @@ class JetBotController:
                 status_forcelist=status_forcelist,
                 allowed_methods=frozenset(["GET", "POST"])
             )
-        except TypeError:
+        except TypeTypeError:
             retries = Retry(
                 total=total_retries,
                 backoff_factor=backoff_factor,
@@ -175,7 +177,11 @@ class JetBotController:
         state_text = f"State: {self.current_state.name}"
         cv2.putText(debug_frame, state_text, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         
-        # 3. Vẽ line và trọng tâm (nếu robot đang bám line)
+        # 3. Vẽ thông tin LiDAR
+        lidar_text = f"LiDAR Confidence: {self.lidar_confidence:.2f}"
+        cv2.putText(debug_frame, lidar_text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        
+        # 4. Vẽ line và trọng tâm (nếu robot đang bám line)
         if self.current_state == RobotState.DRIVING_STRAIGHT:
             line_center = self._get_line_center(image, self.ROI_Y, self.ROI_H)
             if line_center is not None:
@@ -201,6 +207,10 @@ class JetBotController:
         self.INTERSECTION_APPROACH_DURATION = 0.5
         self.LINE_REACQUIRE_TIMEOUT = 3.0
         self.SCAN_PIXEL_THRESHOLD = 100
+        self.LIDAR_CONFIDENCE_THRESHOLD = 0.7  # New parameter for LiDAR confidence
+        self.LIDAR_BUFFER_SIZE = 5  # Number of scans to average
+        self.LIDAR_MIN_DISTANCE = 0.1  # Minimum distance to consider valid (meters)
+        self.LIDAR_MAX_DISTANCE = 2.0  # Maximum distance to consider (meters)
         self.current_state = None
         self.DIRECTIONS = [Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST]
         self.current_direction_index = 1
@@ -208,7 +218,6 @@ class JetBotController:
         self.VIDEO_OUTPUT_FILENAME = 'jetbot_run.avi'
         self.VIDEO_FPS = 20
         self.VIDEO_FOURCC = cv2.VideoWriter_fourcc(*'MJPG')
-        # Define direction label to enum mapping
         self.LABEL_TO_DIRECTION_ENUM = {
             'N': Direction.NORTH,
             'E': Direction.EAST,
@@ -243,6 +252,52 @@ class JetBotController:
         except Exception as e:
             rospy.logerr(f"Lỗi chuyển đổi ảnh: {e}")
 
+    def lidar_callback(self, scan_msg):
+        """Custom LiDAR callback to process and filter scan data."""
+        try:
+            self.latest_scan = scan_msg
+            ranges = np.array(scan_msg.ranges)
+            # Filter out invalid ranges
+            valid_ranges = ranges[np.logical_and(
+                ranges > self.LIDAR_MIN_DISTANCE,
+                ranges < self.LIDAR_MAX_DISTANCE
+            )]
+            if len(valid_ranges) > 0:
+                # Calculate average distance in front (e.g., -30 to 30 degrees)
+                angle_increment = scan_msg.angle_increment
+                front_indices = np.where(
+                    np.abs(np.arange(len(ranges)) * angle_increment - math.pi/2) < math.radians(30)
+                )[0]
+                front_ranges = ranges[front_indices]
+                front_ranges = front_ranges[np.isfinite(front_ranges)]
+                if len(front_ranges) > 0:
+                    avg_distance = np.mean(front_ranges)
+                    # Update confidence based on distance and consistency
+                    self.lidar_confidence = self._update_lidar_confidence(avg_distance)
+                    rospy.logdebug(f"LiDAR avg distance: {avg_distance:.2f}m, confidence: {self.lidar_confidence:.2f}")
+                else:
+                    self.lidar_confidence = 0
+            else:
+                self.lidar_confidence = 0
+        except Exception as e:
+            rospy.logerr(f"Lỗi xử lý dữ liệu LiDAR: {e}")
+            self.lidar_confidence = 0
+
+    def _update_lidar_confidence(self, avg_distance):
+        """Update LiDAR confidence based on average distance and buffer."""
+        self.lidar_buffer.append(avg_distance)
+        if len(self.lidar_buffer) > self.LIDAR_BUFFER_SIZE:
+            self.lidar_buffer.pop(0)
+        # Calculate confidence based on consistency and distance
+        if len(self.lidar_buffer) < 2:
+            return 0.0
+        std_dev = np.std(self.lidar_buffer)
+        confidence = max(0.0, 1.0 - std_dev / avg_distance if avg_distance > 0 else 0.0)
+        # Boost confidence if distance suggests an open path (intersection)
+        if avg_distance > 1.0:  # Likely an intersection
+            confidence = min(confidence * 1.5, 1.0)
+        return confidence
+
     def run(self):
         rospy.loginfo("Bắt đầu vòng lặp. Đợi 3 giây...") 
         time.sleep(3) 
@@ -267,19 +322,23 @@ class JetBotController:
                     self.robot.stop()
                     rate.sleep()
                     continue
-                if self.detector.process_detection():
-                    rospy.loginfo("SỰ KIỆN (LiDAR): Phát hiện giao lộ. Dừng ngay lập tức.")
-                    self.robot.stop()
-                    time.sleep(0.5)
-                    self.current_node_id = self.target_node_id
-                    rospy.loginfo(f"==> ĐÃ ĐẾN node {self.current_node_id}.")
-                    if self.current_node_id == self.navigator.end_node:
-                        rospy.loginfo("ĐÃ ĐẾN ĐÍCH CUỐI CÙNG!")
-                        self._set_state(RobotState.GOAL_REACHED)
-                    else:
-                        self._set_state(RobotState.HANDLING_EVENT)
-                        self.handle_intersection()
-                    continue
+                # Cross-validate LiDAR detection with camera
+                if self.detector.process_detection() and self.lidar_confidence > self.LIDAR_CONFIDENCE_THRESHOLD:
+                    # Confirm with camera that line is disappearing
+                    lookahead_line = self._get_line_center(self.latest_image, self.LOOKAHEAD_ROI_Y, self.LOOKAHEAD_ROI_H)
+                    if lookahead_line is None:
+                        rospy.loginfo("SỰ KIỆN (LiDAR + Camera): Phát hiện giao lộ. Dừng ngay lập tức.")
+                        self.robot.stop()
+                        time.sleep(0.5)
+                        self.current_node_id = self.target_node_id
+                        rospy.loginfo(f"==> ĐÃ ĐẾN node {self.current_node_id}.")
+                        if self.current_node_id == self.navigator.end_node:
+                            rospy.loginfo("ĐÃ ĐẾN ĐÍCH CUỐI CÙNG!")
+                            self._set_state(RobotState.GOAL_REACHED)
+                        else:
+                            self._set_state(RobotState.HANDLING_EVENT)
+                            self.handle_intersection()
+                        continue
                 lookahead_line_center = self._get_line_center(self.latest_image, self.LOOKAHEAD_ROI_Y, self.LOOKAHEAD_ROI_H)
                 if lookahead_line_center is None:
                     rospy.logwarn("SỰ KIỆN (Dự báo): Vạch kẻ đường biến mất ở phía xa. Chuẩn bị vào giao lộ.")
@@ -394,7 +453,7 @@ class JetBotController:
         end_x = start_x + center_width
         cv2.rectangle(focus_mask, (start_x, 0), (end_x, roi_height), 255, -1)
         final_mask = cv2.bitwise_and(color_mask, focus_mask)
-        _, contours, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return None
         c = max(contours, key=cv2.contourArea)
@@ -479,7 +538,7 @@ class JetBotController:
         roi = image[self.ROI_Y : self.ROI_Y + self.ROI_H, :]
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self.LINE_COLOR_LOWER, self.LINE_COLOR_UPPER)
-        _img, contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         return bool(contours) and cv2.contourArea(max(contours, key=cv2.contourArea)) > self.SCAN_PIXEL_THRESHOLD
     
     def scan_for_available_paths_proactive(self):
