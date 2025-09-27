@@ -13,6 +13,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from pathlib import Path
 import argparse
+import tempfile
 
 from jetbot import Robot
 from sensor_msgs.msg import LaserScan, Image
@@ -44,9 +45,10 @@ class JetBotController:
         self.video_writer = None
         self.initialize_video_writer()
 
-        # Fetch map data using API
+        # Fetch map data and save to temporary file
         self.map_data = self.fetch_map(token, map_type)
-        self.navigator = MapNavigator(self.map_data)  # Pass map data directly
+        self.temp_map_file = self.save_map_to_temp_file(self.map_data, map_type)
+        self.navigator = MapNavigator(self.temp_map_file)  # Pass file path to MapNavigator
         self.current_node_id = self.navigator.start_node
         self.target_node_id = None
         self.planned_path = None
@@ -105,6 +107,18 @@ class JetBotController:
             raise
         except Exception as e:
             rospy.logerr(f"Lỗi khi kết nối/parse: {e}")
+            raise
+
+    def save_map_to_temp_file(self, map_data, map_type):
+        """Save map data to a temporary JSON file and return its path."""
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix=f'_{map_type}.json', delete=False, encoding='utf-8') as f:
+                json.dump(map_data, f, ensure_ascii=False, indent=2)
+                temp_file_path = f.name
+            rospy.loginfo(f"Đã lưu map tạm thời vào: {temp_file_path}")
+            return temp_file_path
+        except Exception as e:
+            rospy.logerr(f"Lỗi khi lưu map vào file tạm thời: {e}")
             raise
 
     def plan_initial_route(self): 
@@ -319,6 +333,12 @@ class JetBotController:
             rospy.loginfo("Đã lưu và đóng file video.")
         if hasattr(self, 'detector') and self.detector is not None:
             self.detector.stop_scanning()
+        if hasattr(self, 'temp_map_file') and self.temp_map_file:
+            try:
+                os.remove(self.temp_map_file)
+                rospy.loginfo(f"Đã xóa file map tạm thời: {self.temp_map_file}")
+            except Exception as e:
+                rospy.logwarn(f"Lỗi khi xóa file map tạm thời: {e}")
         rospy.loginfo("Đã giải phóng tài nguyên. Chương trình kết thúc.")
 
     def map_absolute_to_relative(self, target_direction_label, current_robot_direction):
