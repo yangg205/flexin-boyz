@@ -8,7 +8,7 @@ from jetbot import Robot
 class ProblemA:
     def __init__(self, map_file="map.json"):
         self.robot = Robot()
-        self.speed = 0.25   # tăng tốc hơn bình thường
+        self.speed = 2.0   # tăng tốc hơn bình thường
         self.turn_time = 0.6  # thời gian rẽ 90 độ (tối ưu hóa)
         self.load_map(map_file)
         self.path = self.bfs_shortest_path()
