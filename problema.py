@@ -113,21 +113,31 @@ class ProblemA:
         if diff == 3: return "left"
         return "turn_around"
 
-    def drive_action(self, action):
+    def drive_action(self, action, threshold=0.4):
         if action == "straight":
+            rospy.loginfo("🚗 Đang tiến thẳng...")
             self.robot.set_motors(self.speed, self.speed)
-            time.sleep(1.0)
+            while not rospy.is_shutdown():
+                if self.lidar_check_obstacle(threshold=threshold):
+                    rospy.logwarn("⛔ Phát hiện vật cản phía trước! Dừng lại.")
+                    break
+                rospy.sleep(0.05)  # tránh busy loop
         elif action == "right":
+            rospy.loginfo("↪️ Rẽ phải...")
             self.robot.set_motors(self.speed, -self.speed)
             time.sleep(self.turn_time)
         elif action == "left":
+            rospy.loginfo("↩️ Rẽ trái...")
             self.robot.set_motors(-self.speed, self.speed)
             time.sleep(self.turn_time)
         elif action == "turn_around":
+            rospy.loginfo("🔄 Quay đầu...")
             self.robot.set_motors(self.speed, -self.speed)
             time.sleep(self.turn_time * 2)
+
         self.robot.stop()
-        time.sleep(0.2)
+        rospy.sleep(0.2)
+
 
     # ---------------- LIDAR ----------------
     def lidar_callback(self, msg):
