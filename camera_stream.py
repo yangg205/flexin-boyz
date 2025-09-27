@@ -5,8 +5,7 @@ import time
 import os
 
 # Khởi tạo YOLO
-model = YOLO("best.pt")  # đường dẫn tới model của bạn
-
+model = YOLO('/home/jetbot/flexin-boyz/model/best.pt')
 # Camera
 camera = cv2.VideoCapture(0)
 
