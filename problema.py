@@ -7,7 +7,7 @@ import numpy as np
 import argparse
 from jetbot import Robot
 from sensor_msgs.msg import LaserScan
-from get_map import fetch_map  # ⚡ load map từ get_map.py
+from get_map import fetch_map   # ⚡ import hàm lấy map
 
 
 class ProblemA:
@@ -20,7 +20,7 @@ class ProblemA:
         self.latest_scan = None
         rospy.Subscriber("/scan", LaserScan, self.lidar_callback)
 
-        # ⚡ luôn luôn load map từ get_map.py
+        # ⚡ luôn luôn load map từ get_map
         data = fetch_map(token=token, map_type=map_type)
 
         self.parse_map(data)
