@@ -5,6 +5,7 @@ import time
 import heapq
 import numpy as np
 import argparse
+import requests
 from jetbot import Robot
 from sensor_msgs.msg import LaserScan
 from get_map import fetch_map   # ⚡ import hàm lấy map
@@ -20,8 +21,15 @@ class ProblemA:
         self.latest_scan = None
         rospy.Subscriber("/scan", LaserScan, self.lidar_callback)
 
-        # ⚡ luôn luôn load map từ get_map
-        data = fetch_map(token=token, map_type=map_type)
+        # ⚡ luôn luôn load map từ get_map, fallback nếu bị lỗi urllib3
+        try:
+            data = fetch_map(token=token, map_type=map_type)
+        except TypeError as e:
+            rospy.logwarn(f"Lỗi fetch_map (urllib3 cũ?) → fallback: {e}")
+            url = "https://hackathon2025-dev.fpt.edu.vn/api/maps/get_active_map/"
+            resp = requests.get(url, params={"token": token, "map_type": map_type}, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
 
         self.parse_map(data)
         self.path = self.a_star_shortest_path()
