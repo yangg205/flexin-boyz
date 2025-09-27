@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from ultralytics import YOLO
 
-model = YOLO('/model/best.pt')
+model = YOLO('/home/jetbot/flexin-boyz/model/best.pt')
 
 model.export(format='onnx', opset=12, imgsz=640)
 
