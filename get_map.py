@@ -12,7 +12,7 @@ MAP_ENDPOINT = "/api/maps/get_active_map/"
 # 🔧 Toàn bộ config di chuyển để tiện chỉnh sửa
 MOTION_CONFIG = {
     "speed": 0.25,        # tốc độ cơ bản
-    "forward_time": 1.5,  # thời gian chạy thẳng qua 1 ô
+    "forward_time": 4.0,  # thời gian chạy thẳng qua 1 ô
     "turn_time": 1.0,     # thời gian rẽ 90 độ
     "stop_delay": 0.2     # delay sau khi stop
 }
