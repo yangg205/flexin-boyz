@@ -133,7 +133,10 @@ class ProblemA:
 def main():
     rospy.init_node("problem_a_node", anonymous=True)
     # TODO: Thay token của team bạn vào đây
-    token = "YOUR_TEAM_TOKEN"
+    token = input("Nhập token của đội bạn: ").strip()
+    if not token:
+        print("Bạn phải nhập token!")
+        return
     pa = ProblemA(token=token, map_type="map_z")
     pa.run()
 
