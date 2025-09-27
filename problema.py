@@ -9,7 +9,7 @@ class ProblemA:
     def __init__(self, map_file="map.json"):
         self.robot = Robot()
         self.speed = 2.0   # tăng tốc hơn bình thường
-        self.turn_time = 0.9  # thời gian rẽ 90 độ (tối ưu hóa)
+        self.turn_time = 0.1  # thời gian rẽ 90 độ (tối ưu hóa)
         self.load_map(map_file)
         self.path = self.bfs_shortest_path()
         self.current_dir = "N"  # giả sử ban đầu hướng Bắc
