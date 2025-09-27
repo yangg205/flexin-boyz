@@ -34,7 +34,7 @@ class ProblemAImprovedController:
         self.setup_parameters()
         self.robot = Robot()
         self.bridge = CvBridge()
-        self.navigator = MapNavigator("/home/flexin-boyz/map.json")
+        self.navigator = MapNavigator("/home/jetbot/flexin-boyz/map.json")
         self.opposite_detector = SimpleOppositeDetector()
         self.current_state = RobotState.WAITING_FOR_FLAG
         self.target_node_id = None
