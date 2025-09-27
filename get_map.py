@@ -29,13 +29,27 @@ ENDPOINT = "/api/maps/get_active_map/"
 
 def create_session_with_retries(total_retries=3, backoff_factor=0.5, status_forcelist=(429,500,502,503,504)):
     s = requests.Session()
-    retries = Retry(total=total_retries, backoff_factor=backoff_factor,
-                    status_forcelist=status_forcelist,
-                    allowed_methods=frozenset(["GET","POST"]))
+    try:
+        # urllib3 mới
+        retries = Retry(
+            total=total_retries,
+            backoff_factor=backoff_factor,
+            status_forcelist=status_forcelist,
+            allowed_methods=frozenset(["GET","POST"])
+        )
+    except TypeError:
+        # fallback cho urllib3 cũ
+        retries = Retry(
+            total=total_retries,
+            backoff_factor=backoff_factor,
+            status_forcelist=status_forcelist,
+            method_whitelist=frozenset(["GET","POST"])
+        )
     adapter = HTTPAdapter(max_retries=retries)
     s.mount("https://", adapter)
     s.mount("http://", adapter)
     return s
+
 
 def fetch_map(token: str, map_type: str, timeout=10):
     if not token:
