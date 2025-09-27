@@ -72,13 +72,13 @@ class JetBotController:
         self.latest_scan = None
         self.latest_image = None
         self.detector = SimpleOppositeDetector()
-        rospy.Subscriber('/scan', LaserScan, self.lidar_callback)  # Updated to custom callback
+        rospy.Subscriber('/scan', LaserScan, self.lidar_callback)
         rospy.Subscriber('/csi_cam_0/image_raw', Image, self.camera_callback)
         rospy.loginfo("Đã đăng ký vào các topic /scan và /csi_cam_0/image_raw.")
         self.state_change_time = rospy.get_time()
         self._set_state(RobotState.WAITING_FOR_LINE, initial=True)
-        self.lidar_confidence = 0  # Track LiDAR detection confidence
-        self.lidar_buffer = []  # Buffer for smoothing LiDAR detections
+        self.lidar_confidence = 0
+        self.lidar_buffer = []
         rospy.loginfo("Khởi tạo hoàn tất. Sẵn sàng hoạt động.")
 
     def create_session_with_retries(self, total_retries=3, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504)):
@@ -90,7 +90,7 @@ class JetBotController:
                 status_forcelist=status_forcelist,
                 allowed_methods=frozenset(["GET", "POST"])
             )
-        except TypeTypeError:
+        except TypeError:
             retries = Retry(
                 total=total_retries,
                 backoff_factor=backoff_factor,
@@ -207,10 +207,10 @@ class JetBotController:
         self.INTERSECTION_APPROACH_DURATION = 0.5
         self.LINE_REACQUIRE_TIMEOUT = 3.0
         self.SCAN_PIXEL_THRESHOLD = 100
-        self.LIDAR_CONFIDENCE_THRESHOLD = 0.7  # New parameter for LiDAR confidence
-        self.LIDAR_BUFFER_SIZE = 5  # Number of scans to average
-        self.LIDAR_MIN_DISTANCE = 0.1  # Minimum distance to consider valid (meters)
-        self.LIDAR_MAX_DISTANCE = 2.0  # Maximum distance to consider (meters)
+        self.LIDAR_CONFIDENCE_THRESHOLD = 0.7
+        self.LIDAR_BUFFER_SIZE = 5
+        self.LIDAR_MIN_DISTANCE = 0.1
+        self.LIDAR_MAX_DISTANCE = 2.0
         self.current_state = None
         self.DIRECTIONS = [Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST]
         self.current_direction_index = 1
@@ -294,7 +294,7 @@ class JetBotController:
         std_dev = np.std(self.lidar_buffer)
         confidence = max(0.0, 1.0 - std_dev / avg_distance if avg_distance > 0 else 0.0)
         # Boost confidence if distance suggests an open path (intersection)
-        if avg_distance > 1.0:  # Likely an intersection
+        if avg_distance > 1.0:
             confidence = min(confidence * 1.5, 1.0)
         return confidence
 
