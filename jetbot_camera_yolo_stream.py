@@ -19,7 +19,7 @@ def gstreamer_pipeline(capture_width=640, capture_height=480,
     )
 
 # Load YOLO model
-model_path = "/home/jetbot/flexin-boyz/best.onnx"
+model_path = "/home/jetbot/flexin-boyz/model/best.onnx"
 model = YOLO(model_path)
 print("[INFO] YOLO model loaded.")
 
